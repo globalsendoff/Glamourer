@@ -1,4 +1,6 @@
-﻿using Glamourer.Config;
+﻿using Glamourer.Api.Enums;
+using Glamourer.Config;
+using Glamourer.Events;
 using Glamourer.Interop.Penumbra;
 using ImSharp;
 using Luna;
@@ -51,21 +53,18 @@ public sealed class ActorSelector(
     ActorObjectManager objects,
     ActorFilter filter,
     PenumbraSubscriber penumbra,
-    Configuration config) : IPanel
+    Configuration config,
+    StateChanged stateChanged) : IPanel
 {
     public ReadOnlySpan<byte> Id
         => "ActorSelector"u8;
 
     public void Draw()
     {
-        filter.DrawSelectors(Im.ContentRegion.Available with { Y = Im.Style.FrameHeight });
         Im.Cursor.Y += Im.Style.FramePadding.Y;
-        var cache = CacheManager.Instance.GetOrCreateCache(Im.Id.Current, () => new ActorSelectorCache(objects, filter, penumbra, config));
+        var cache = CacheManager.Instance.GetOrCreateCache(Im.Id.Current,
+            () => new ActorSelectorCache(objects, filter, penumbra, config, stateChanged));
         HandleRememberedSelection();
-        using var child = Im.Child.Begin("ActorList"u8, Im.ContentRegion.Available);
-        if (!child)
-            return;
-
         using var clip = new Im.ListClipper(cache.Count, Im.Style.TextHeightWithSpacing);
         foreach (var actor in clip.Iterate(cache))
         {
@@ -108,16 +107,20 @@ public sealed class ActorSelector(
         private readonly ActorObjectManager _objects;
         private readonly PenumbraSubscriber _penumbra;
         private readonly Configuration      _config;
+        private readonly StateChanged       _stateChanged;
 
-        public ActorSelectorCache(ActorObjectManager objects, ActorFilter filter, PenumbraSubscriber penumbra, Configuration config)
+        public ActorSelectorCache(ActorObjectManager objects, ActorFilter filter, PenumbraSubscriber penumbra, Configuration config,
+            StateChanged stateChanged)
             : base(filter)
         {
             _objects                                 =  objects;
             _penumbra                                =  penumbra;
             _config                                  =  config;
+            _stateChanged                            =  stateChanged;
             _objects.Objects.OnUpdateRequired        += OnUpdateRequired;
             _penumbra.GameState.CreatedCharacterBase += OnCreatedCharacterBase;
             _config.ActorSortModeChanged             += OnActorSortModeChanged;
+            _stateChanged.Subscribe(OnStateChanged, StateChanged.Priority.ActorSelector);
         }
 
         /// <summary> Update actors when models are created since visible models are required. </summary>
@@ -132,12 +135,20 @@ public sealed class ActorSelector(
         private void OnActorSortModeChanged(ActorSortMode _1, ActorSortMode _2)
             => Dirty |= IManagedCache.DirtyFlags.Custom;
 
+        private void OnStateChanged(in StateChanged.Arguments arguments)
+        {
+            if (arguments.Type is StateChangeType.Customize or StateChangeType.EntireCustomize or StateChangeType.Model
+                or StateChangeType.Reset or StateChangeType.Reapply)
+                Dirty |= IManagedCache.DirtyFlags.Custom;
+        }
+
         protected override void Dispose(bool disposing)
         {
             base.Dispose(disposing);
             _objects.Objects.OnUpdateRequired        -= OnUpdateRequired;
             _penumbra.GameState.CreatedCharacterBase -= OnCreatedCharacterBase;
             _config.ActorSortModeChanged             -= OnActorSortModeChanged;
+            _stateChanged.Unsubscribe(OnStateChanged);
         }
 
         private static readonly StringU8 PlayerSortOrder = new("0"u8);

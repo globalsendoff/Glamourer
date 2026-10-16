@@ -36,53 +36,59 @@ public sealed class ActorFilter : TextFilterBase<ActorCacheItem>, IUiService
         return true;
     }
 
-    public bool DrawSelectors(Vector2 availableRegion)
+    private bool DrawCombo(float popupLeft)
     {
-        var changes = _clanGender.DrawSelectors(availableRegion);
+        using var color = ImGuiColor.Button.Push(LunaStyle.AttentionBackground,
+            _config.ActorTypeFilter is not ActorTypeFilter.None || !_clanGender.IsEmpty);
+        const ComboFlags flags = ComboFlags.NoPreview | ComboFlags.HeightLargest | ComboFlags.PopupAlignLeft;
+        Im.Combo.DrawPreview("##combo"u8, StringU8.Empty, out var popupId, out var buttonBounds, flags);
 
-        if (changes)
-            InvokeEvent();
-
-        return changes;
-    }
-
-    private bool DrawCombo()
-    {
-        using var color = ImGuiColor.Button.Push(LunaStyle.AttentionBackground, _config.ActorTypeFilter is not ActorTypeFilter.None);
-        using var combo = Im.Combo.Begin("##combo"u8, StringU8.Empty,
-            ComboFlags.NoPreview | ComboFlags.HeightLargest | ComboFlags.PopupAlignLeft);
-
-        var changes = false;
         if (Im.Item.MiddleClicked())
         {
             // Ensure that a right-click clears the text filter if it is currently being edited.
             Im.Id.ClearActive();
-            changes = Clear();
+            return Clear();
         }
 
-        Im.Tooltip.OnHover("Filter actors for their type.\nMiddle-Click to clear all filters, including the text-filter."u8);
+        Im.Tooltip.OnHover("Filter actors for their type, clan and gender.\nMiddle-Click to clear all filters, including the text-filter."u8);
 
+        var popupBounds = GetPopupBounds(popupLeft, buttonBounds);
+        using var combo = Im.Combo.DrawPopup(popupId, popupBounds, flags);
         if (!combo)
-            return changes;
+            return false;
 
-        var filter = _config.ActorTypeFilter ^ ActorTypeFilter.All;
-        if (Im.Checkbox("Everything"u8, ref filter, ActorTypeFilter.All))
+        var changes = false;
+        using (var table = Im.Table.Begin("##filters"u8, 2,
+                   TableFlags.SizingFixedFit | TableFlags.BordersInnerVertical | TableFlags.NoHostExtendX))
         {
-            _config.ActorTypeFilter = filter ^ ActorTypeFilter.All;
-            changes                 = true;
-        }
-
-        Im.Dummy(ImEx.ScaledVectorY(8));
-        using var style = ImStyleDouble.ItemSpacing.PushY(2 * Im.Style.GlobalScale);
-        foreach (var flag in ActorTypeFilter.Values.Skip(1))
-        {
-            if (Im.Checkbox(flag.ToNameU8(), ref filter, flag))
+            if (table)
             {
-                _config.ActorTypeFilter = filter ^ ActorTypeFilter.All;
-                changes                 = true;
-            }
+                Im.Table.NextColumn();
+                var filter = _config.ActorTypeFilter ^ ActorTypeFilter.All;
+                if (Im.Checkbox("Everything"u8, ref filter, ActorTypeFilter.All))
+                {
+                    _config.ActorTypeFilter = filter ^ ActorTypeFilter.All;
+                    changes                 = true;
+                }
 
-            Im.Tooltip.OnHover(flag.Tooltip());
+                Im.Dummy(ImEx.ScaledVectorY(8));
+                using (ImStyleDouble.ItemSpacing.PushY(2 * Im.Style.GlobalScale))
+                {
+                    foreach (var flag in ActorTypeFilter.Values.Skip(1))
+                    {
+                        if (Im.Checkbox(flag.ToNameU8(), ref filter, flag))
+                        {
+                            _config.ActorTypeFilter = filter ^ ActorTypeFilter.All;
+                            changes                 = true;
+                        }
+
+                        Im.Tooltip.OnHover(flag.Tooltip());
+                    }
+                }
+
+                Im.Table.NextColumn();
+                changes |= _clanGender.Draw();
+            }
         }
 
         if (changes)
@@ -91,12 +97,42 @@ public sealed class ActorFilter : TextFilterBase<ActorCacheItem>, IUiService
         return changes;
     }
 
+    private static unsafe Rectangle GetPopupBounds(float desiredX, Rectangle buttonBounds)
+    {
+        var popupName = new StringU8($"##Combo_{Im.Context.Pointer->BeginPopupStack.Size:D2}");
+        fixed (byte* name = popupName.Span)
+        {
+            var popup = Im.Native.Methods.Internal.FindWindowByName(name);
+            if (popup is null || !popup->WasActive)
+                return new Rectangle(desiredX, buttonBounds.Minimum.Y, desiredX + buttonBounds.Width, buttonBounds.Maximum.Y);
+
+            ImVec2 popupSize;
+            Im.Native.Methods.Internal.CalcWindowNextAutoFitSize(&popupSize, popup);
+
+            var viewport = Im.Window.Viewport.Pointer;
+            var workLeft = viewport->WorkPos.X;
+            var workRight = workLeft + viewport->WorkSize.X;
+            var margin = Im.Style.DisplaySafeAreaPadding.X;
+            var minimumX = workLeft + margin;
+            var maximumX = workRight - popupSize.X - margin;
+            if (maximumX < minimumX)
+            {
+                minimumX = workLeft;
+                maximumX = Math.Max(workLeft, workRight - popupSize.X);
+            }
+
+            var popupLeft = Math.Clamp(desiredX, minimumX, maximumX);
+            return new Rectangle(popupLeft, buttonBounds.Minimum.Y, popupLeft + popupSize.X, buttonBounds.Maximum.Y);
+        }
+    }
+
     public override bool DrawFilter(ReadOnlySpan<byte> label, Vector2 availableRegion)
     {
+        var popupLeft   = Im.Cursor.ScreenX;
         var filterRegion = availableRegion with { X = availableRegion.X - Im.Style.FrameHeight };
         var ret          = base.DrawFilter(label, filterRegion);
         Im.Line.NoSpacing();
-        ret |= DrawCombo();
+        ret |= DrawCombo(popupLeft);
 
         return ret;
     }

@@ -1,4 +1,5 @@
-﻿using Glamourer.GameData;
+﻿using Dalamud.Interface;
+using Glamourer.GameData;
 using Glamourer.Services;
 using ImSharp;
 using Luna;
@@ -8,118 +9,169 @@ namespace Glamourer.Gui;
 
 internal sealed class ClanGenderFilter(CustomizeService customize)
 {
-    private static readonly Rgba32 FemaleTextColor = new(255, 175, 200, 255);
+    private static readonly AwesomeIcon MaleIcon   = FontAwesomeIcon.Mars;
+    private static readonly AwesomeIcon FemaleIcon = FontAwesomeIcon.Venus;
+
     private static readonly Rgba32 MaleTextColor   = new(160, 205, 255, 255);
+    private static readonly Rgba32 FemaleTextColor = new(255, 175, 200, 255);
 
-    private static readonly SubRace[] Clans   = [SubRace.Unknown, .. CustomizeManager.Clans];
-    private static readonly Gender[] Genders = [Gender.Unknown, Gender.Female, Gender.Male];
+    [Flags]
+    private enum ClanFlags : ushort
+    {
+        None            = 0,
+        Midlander      = 1 << 0,
+        Highlander     = 1 << 1,
+        Wildwood       = 1 << 2,
+        Duskwight      = 1 << 3,
+        Plainsfolk     = 1 << 4,
+        Dunesfolk      = 1 << 5,
+        SeekerOfTheSun = 1 << 6,
+        KeeperOfTheMoon = 1 << 7,
+        Seawolf        = 1 << 8,
+        Hellsguard     = 1 << 9,
+        Raen           = 1 << 10,
+        Xaela          = 1 << 11,
+        Helion         = 1 << 12,
+        Lost           = 1 << 13,
+        Rava           = 1 << 14,
+        Veena          = 1 << 15,
+        All            = ushort.MaxValue,
+    }
 
-    private SubRace _clan   = SubRace.Unknown;
-    private Gender  _gender = Gender.Unknown;
+    private ClanFlags _clans = ClanFlags.All;
+    private bool?     _male;
 
     public bool IsEmpty
-        => _clan is SubRace.Unknown && _gender is Gender.Unknown;
+        => _clans is ClanFlags.All && _male is null;
 
     public bool Clear()
     {
         if (IsEmpty)
             return false;
 
-        _clan   = SubRace.Unknown;
-        _gender = Gender.Unknown;
+        _clans = ClanFlags.All;
+        _male  = null;
         return true;
     }
 
     public bool Matches(SubRace clan, Gender gender)
-        => (_clan is SubRace.Unknown || clan == _clan) && (_gender is Gender.Unknown || gender == _gender);
+    {
+        var clanFlag      = ToFlag(clan);
+        var clanMatches   = clanFlag is not ClanFlags.None && _clans.HasFlag(clanFlag);
+        var normalized    = NormalizeGender(gender);
+        var genderMatches = _male switch
+        {
+            true  => normalized is Gender.Male,
+            false => normalized is Gender.Female,
+            null  => true,
+        };
+        return clanMatches && genderMatches;
+    }
 
-    public bool DrawSelectors(Vector2 availableRegion)
+    public bool Draw()
     {
         using var id = Im.Id.Push("ClanGenderFilters"u8);
-        var clanWidth = Math.Max(0, availableRegion.X * 0.72f - Im.Style.ItemSpacing.X / 2);
-        Im.Item.SetNextWidth(clanWidth);
-        var changes = DrawClanCombo();
-        Im.Line.Same();
-        Im.Item.SetNextWidth(Math.Max(0, availableRegion.X - clanWidth - Im.Style.ItemSpacing.X));
-        changes |= DrawGenderCombo();
+        var changes = DrawGender();
+        Im.Dummy(ImEx.ScaledVectorY(8));
+        changes |= DrawClans();
         return changes;
     }
 
-    private bool DrawClanCombo()
+    private bool DrawGender()
     {
-        using var combo = _clan is SubRace.Unknown
-            ? Im.Combo.Begin("##clan"u8, "Clan"u8, ComboFlags.HeightLargest)
-            : Im.Combo.Begin("##clan"u8, customize.ClanName(_clan, _gender is Gender.Female ? Gender.Female : Gender.Male),
-                ComboFlags.HeightLargest);
-        var changes = HandleMouseWheel(ref _clan, Clans);
-        if (!combo)
-            return changes;
-
-        if (Im.Selectable("All"u8, _clan is SubRace.Unknown) && _clan is not SubRace.Unknown)
+        Im.Text("Gender"u8);
+        var iconFontSize = Im.Style.FrameHeight - 2 * Im.Style.GlobalScale;
+        var iconScale    = iconFontSize / Im.Style.TextHeight;
+        var maleSize     = ImEx.Icon.CalculateSize(MaleIcon) * iconScale;
+        var femaleSize   = ImEx.Icon.CalculateSize(FemaleIcon) * iconScale;
+        var buttonSize = new Vector2(maleSize.X + femaleSize.X + Im.Style.ItemInnerSpacing.X + 2 * Im.Style.FramePadding.X,
+            Im.Style.FrameHeight);
+        var changes = Im.Button("##gender"u8, buttonSize);
+        if (changes)
         {
-            _clan  = SubRace.Unknown;
+            _male = _male switch
+            {
+                null  => true,
+                true  => false,
+                false => null,
+            };
+        }
+
+        var drawMale     = _male is not false;
+        var drawFemale   = _male is not true;
+        var iconSpacing  = drawMale && drawFemale ? Im.Style.ItemInnerSpacing.X : 0;
+        var contentWidth = (drawMale ? maleSize.X : 0) + (drawFemale ? femaleSize.X : 0) + iconSpacing;
+        var position = Im.Item.UpperLeftCorner
+          + new Vector2((buttonSize.X - contentWidth) / 2, (buttonSize.Y - Math.Max(maleSize.Y, femaleSize.Y)) / 2);
+        if (drawMale)
+        {
+            Im.DrawList.Window.Text(AwesomeIcon.Font, iconFontSize, position, MaleTextColor, MaleIcon.Span);
+            position.X += maleSize.X + iconSpacing;
+        }
+
+        if (drawFemale)
+            Im.DrawList.Window.Text(AwesomeIcon.Font, iconFontSize, position, FemaleTextColor, FemaleIcon.Span);
+
+        Im.Tooltip.OnHover(_male switch
+        {
+            true  => "Male\nClick to cycle gender filter."u8,
+            false => "Female\nClick to cycle gender filter."u8,
+            null  => "Both\nClick to cycle gender filter."u8,
+        });
+        return changes;
+    }
+
+    private bool DrawClans()
+    {
+        Im.Text("Clan"u8);
+        var changes = false;
+        var everything = _clans is ClanFlags.All;
+        if (Im.Checkbox("Everything"u8, ref everything))
+        {
+            _clans = everything ? ClanFlags.All : ClanFlags.None;
             changes = true;
         }
 
-        foreach (var clan in CustomizeManager.Clans)
+        Im.Dummy(ImEx.ScaledVectorY(8));
+        using (ImStyleDouble.ItemSpacing.PushY(2 * Im.Style.GlobalScale))
         {
-            if (Im.Selectable(customize.ClanName(clan, _gender is Gender.Female ? Gender.Female : Gender.Male), clan == _clan)
-             && clan != _clan)
+            foreach (var clan in CustomizeManager.Clans)
             {
-                _clan  = clan;
-                changes = true;
+                var flag = ToFlag(clan);
+                changes |= Im.Checkbox(customize.ClanName(clan, Gender.Male), ref _clans, flag);
             }
         }
 
         return changes;
     }
 
-    private bool DrawGenderCombo()
-    {
-        using var color = ImGuiColor.Text.Push(GenderTextColor(_gender), _gender is not Gender.Unknown);
-        using var combo = _gender is Gender.Unknown
-            ? Im.Combo.Begin("##gender"u8, "Gender"u8)
-            : Im.Combo.Begin("##gender"u8, _gender.ToNameU8());
-        color.Pop();
-        var changes = HandleMouseWheel(ref _gender, Genders);
-        if (!combo)
-            return changes;
-
-        foreach (var gender in Genders)
-        {
-            var name = gender is Gender.Unknown ? "All"u8 : gender.ToNameU8();
-            using var itemColor = ImGuiColor.Text.Push(GenderTextColor(gender), gender is not Gender.Unknown);
-            if (Im.Selectable(name, gender == _gender) && gender != _gender)
-            {
-                _gender = gender;
-                changes = true;
-            }
-        }
-
-        return changes;
-    }
-
-    private static Rgba32 GenderTextColor(Gender gender)
+    private static Gender NormalizeGender(Gender gender)
         => gender switch
         {
-            Gender.Female => FemaleTextColor,
-            Gender.Male   => MaleTextColor,
-            _             => default,
+            Gender.MaleNpc   => Gender.Male,
+            Gender.FemaleNpc => Gender.Female,
+            _                => gender,
         };
 
-    private static bool HandleMouseWheel<T>(ref T value, T[] values) where T : struct, Enum
-    {
-        if (!Im.Item.Hovered() || !MouseWheelType.Control.CheckMouseWheel())
-            return false;
-
-        Im.Item.SetUsingMouseWheel();
-        var delta = (int)Im.Io.MouseWheel;
-        if (delta is 0)
-            return false;
-
-        var currentIndex = Array.IndexOf(values, value);
-        var newIndex     = ImUtility.ApplyMouseWheelDelta(delta, currentIndex, values.Length);
-        value = values[newIndex];
-        return newIndex != currentIndex;
-    }
+    private static ClanFlags ToFlag(SubRace clan)
+        => clan switch
+        {
+            SubRace.Midlander       => ClanFlags.Midlander,
+            SubRace.Highlander      => ClanFlags.Highlander,
+            SubRace.Wildwood        => ClanFlags.Wildwood,
+            SubRace.Duskwight       => ClanFlags.Duskwight,
+            SubRace.Plainsfolk      => ClanFlags.Plainsfolk,
+            SubRace.Dunesfolk       => ClanFlags.Dunesfolk,
+            SubRace.SeekerOfTheSun  => ClanFlags.SeekerOfTheSun,
+            SubRace.KeeperOfTheMoon => ClanFlags.KeeperOfTheMoon,
+            SubRace.Seawolf         => ClanFlags.Seawolf,
+            SubRace.Hellsguard      => ClanFlags.Hellsguard,
+            SubRace.Raen            => ClanFlags.Raen,
+            SubRace.Xaela           => ClanFlags.Xaela,
+            SubRace.Helion          => ClanFlags.Helion,
+            SubRace.Lost            => ClanFlags.Lost,
+            SubRace.Rava            => ClanFlags.Rava,
+            SubRace.Veena           => ClanFlags.Veena,
+            _                       => ClanFlags.None,
+        };
 }

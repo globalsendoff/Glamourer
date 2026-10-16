@@ -24,13 +24,38 @@ public sealed class NpcFilter : TokenizedFilter<NpcFilter.TokenType, NpcCacheIte
         FilterChanged += () => config.Filters.NpcFilter = Text;
     }
 
-    public bool DrawSelectors(Vector2 availableRegion)
+    private bool DrawCombo()
     {
-        var changes = _clanGender.DrawSelectors(availableRegion);
+        using var color = ImGuiColor.Button.Push(LunaStyle.AttentionBackground, !_clanGender.IsEmpty);
+        using var combo = Im.Combo.Begin("##combo"u8, StringU8.Empty,
+            ComboFlags.NoPreview | ComboFlags.HeightLargest | ComboFlags.PopupAlignLeft);
+
+        if (Im.Item.MiddleClicked())
+        {
+            Im.Id.ClearActive();
+            return Clear();
+        }
+
+        Im.Tooltip.OnHover("Filter NPC appearances for clan and gender.\nMiddle-Click to clear all filters, including the text-filter."u8);
+
+        if (!combo)
+            return false;
+
+        var changes = _clanGender.Draw();
         if (changes)
             InvokeEvent();
 
         return changes;
+    }
+
+    public override bool DrawFilter(ReadOnlySpan<byte> label, Vector2 availableRegion)
+    {
+        var filterRegion = availableRegion with { X = availableRegion.X - Im.Style.FrameHeight };
+        var ret          = base.DrawFilter(label, filterRegion);
+        Im.Line.NoSpacing();
+        ret |= DrawCombo();
+
+        return ret;
     }
 
     public override bool Clear()
