@@ -124,13 +124,7 @@ internal sealed class ClanGenderFilter(CustomizeService customize)
     private bool DrawClans()
     {
         Im.Text("Clan"u8);
-        var changes = false;
-        var everything = _clans is ClanFlags.All;
-        if (Im.Checkbox("Everything"u8, ref everything))
-        {
-            _clans = everything ? ClanFlags.All : ClanFlags.None;
-            changes = true;
-        }
+        var changes = Im.Checkbox("Everything"u8, ref _clans, ClanFlags.All);
 
         Im.Dummy(ImEx.ScaledVectorY(8));
         using (ImStyleDouble.ItemSpacing.PushY(2 * Im.Style.GlobalScale))
