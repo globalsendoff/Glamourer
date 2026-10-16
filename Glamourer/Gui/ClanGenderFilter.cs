@@ -57,7 +57,7 @@ internal sealed class ClanGenderFilter(CustomizeService customize)
     public bool Matches(SubRace clan, Gender gender)
     {
         var clanFlag      = ToFlag(clan);
-        var clanMatches   = clanFlag is not ClanFlags.None && _clans.HasFlag(clanFlag);
+        var clanMatches   = _clans is ClanFlags.All || clanFlag is not ClanFlags.None && _clans.HasFlag(clanFlag);
         var normalized    = NormalizeGender(gender);
         var genderMatches = _male switch
         {
